@@ -28,9 +28,3 @@ A combined model integrating both syntactic and semantic features into one neura
 
 - **H1:** Semantic embeddings improve prediction of gaze duration  
 - **H2:** Syntactic features already explain a substantial part of the variance
-
-##  Requirements
-
-- Python 3.8+  
-- `pandas`, `numpy`, `nltk`, `matplotlib`, `scikit-learn`  
-- OpenAI API key (for semantic embeddings)
