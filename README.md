@@ -28,3 +28,15 @@ A combined model integrating both syntactic and semantic features into one neura
 
 - **H1:** Semantic embeddings improve prediction of gaze duration  
 - **H2:** Syntactic features already explain a substantial part of the variance
+
+---
+
+## ⚠️ Note on Large Files
+
+The file `MonolingualReadingData.csv` (≈144 MB) is **not included** in this repository due to GitHub's file size limitations.
+
+To run the code, please manually place the file in the following path:
+
+Data/MonolingualReadingData.csv
+
+[Download MonolingualReadingData.xlsx]((https://expsy.ugent.be/downloads/geco/))
