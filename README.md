@@ -39,4 +39,4 @@ To run the code, please manually place the file in the following path:
 
 Data/MonolingualReadingData.csv
 
-[Download MonolingualReadingData.xlsx]((https://expsy.ugent.be/downloads/geco/))
+Download MonolingualReadingData.xlsx here: https://expsy.ugent.be/downloads/geco/
