@@ -40,3 +40,6 @@ To run the code, please manually place the file in the following path:
 Data/MonolingualReadingData.csv
 
 Download MonolingualReadingData.xlsx here: https://expsy.ugent.be/downloads/geco/
+
+Note: The provided download link points to an Excel file (.xlsx).  
+If needed, you can simply open it and export it as a `.csv` file using Excel or any spreadsheet software.
