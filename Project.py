@@ -7,19 +7,19 @@
 # In[16]:
 
 
-import pandas as pd
-import numpy as np
+import pandas as pd # type: ignore
+import numpy as np # type: ignore
 import re
-import nltk
+import nltk # type: ignore
 nltk.download("brown")
-from nltk.corpus import brown
+from nltk.corpus import brown # type: ignore
 from collections import Counter
 pd.set_option("display.max_rows", 100)
 pd.set_option("display.expand_frame_repr", False)
 
-from dotenv import load_dotenv
+from dotenv import load_dotenv # type: ignore
 import os
-import openai
+import openai # type: ignore
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -27,7 +27,7 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 # In[17]:
 
 
-import torch
+import torch # type: ignore
 print(torch.cuda.is_available())           # → True
 print(torch.cuda.get_device_name(0))       # → NVIDIA GeForce RTX 4060 Ti
 
@@ -329,7 +329,7 @@ print("Best MSE:", best_mse)
 # In[35]:
 
 
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt # type: ignore
 
 # mse_list kommt direkt aus deinem gradient_descent()-Output
 plt.figure(figsize=(10, 5))
@@ -359,9 +359,9 @@ print(comparison_df.head(10))
 # In[ ]:
 
 
-from openai import OpenAI
+from openai import OpenAI # type: ignore
 import time
-import openai
+import openai # type: ignore
 import pickle
 
 #Add api key
@@ -411,8 +411,8 @@ with open("embeddings_dict.pkl", "wb") as f:
 # In[ ]:
 
 
-import torch
-from torch.utils.data import TensorDataset, random_split, DataLoader
+import torch # type: ignore
+from torch.utils.data import TensorDataset, random_split, DataLoader # type: ignore
 import pickle
 
 unique_words = df_clean["word_lower"].dropna().unique()
@@ -459,8 +459,8 @@ assert X_embed.shape[0] == y.shape[0], "Längen stimmen nicht überein!"
 # In[ ]:
 
 
-import torch
-from torch.utils.data import TensorDataset, random_split, DataLoader
+import torch # type: ignore
+from torch.utils.data import TensorDataset, random_split, DataLoader # type: ignore
 
 df_clean["log_gaze"] = np.log1p(df_clean["WORD_GAZE_DURATION"])
 
@@ -480,9 +480,9 @@ test_loader  = DataLoader(test_ds,  batch_size=64)
 # In[ ]:
 
 
-import torch.nn as nn
-from torch.utils.data import TensorDataset, random_split, DataLoader
-from torch.utils.tensorboard import SummaryWriter
+import torch.nn as nn # type: ignore
+from torch.utils.data import TensorDataset, random_split, DataLoader # type: ignore
+from torch.utils.tensorboard import SummaryWriter # type: ignore
 
 
 # In[ ]:
