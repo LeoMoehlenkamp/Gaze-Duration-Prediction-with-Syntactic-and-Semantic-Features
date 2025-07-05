@@ -4,7 +4,7 @@
 # ___
 # ### Import data, all needed packages and display data
 
-# In[2]:
+# In[16]:
 
 
 import pandas as pd
@@ -17,19 +17,33 @@ from collections import Counter
 pd.set_option("display.max_rows", 100)
 pd.set_option("display.expand_frame_repr", False)
 
+from dotenv import load_dotenv
+import os
+import openai
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# In[3]:
+
+# In[17]:
+
+
+import torch
+print(torch.cuda.is_available())           # → True
+print(torch.cuda.get_device_name(0))       # → NVIDIA GeForce RTX 4060 Ti
+
+
+# In[18]:
 
 
 use_cols = ["WORD", "WORD_GAZE_DURATION"]
-df = pd.read_csv("MonolingualReadingData.csv", usecols=use_cols)
+df = pd.read_csv("Data\MonolingualReadingData.csv", usecols=use_cols)
 print(df.head())
 
 
 # ___
 # ### Create new columns that are needed for later modeling
 
-# In[4]:
+# In[19]:
 
 
 # find end of sentence
@@ -51,55 +65,38 @@ df.loc[0, "sentence_id"] = 1
 df["word_pos_in_sentence"] = df.groupby("sentence_id").cumcount() + 1
 
 
-# In[5]:
+# In[20]:
 
 
-print(df[["is_sentence_start", "is_sentence_end"]].head(40))
+print(df[["is_sentence_start", "is_sentence_end"]].head(20))
 
 
-# In[6]:
+# In[21]:
 
 
-print(df[["WORD", "is_sentence_end", "sentence_id", "word_pos_in_sentence"]].tail(80))
-
-
-# In[7]:
-
-
-for i in range(13):
-    print(df[(df["sentence_id"] == 3) & (df["word_pos_in_sentence"] == i)]["WORD"])
-
-
-# In[8]:
-
-
-words = df[(df["sentence_id"] == 3)]["WORD"].tolist()
-print(words)
+print(df[["WORD", "is_sentence_end", "sentence_id", "word_pos_in_sentence"]].tail(20))
 
 
 # ___
 # ### Import text from experiment and nltk corpus for global and local frequency calculation
 
-# In[9]:
+# In[22]:
 
 
-with open("Corpus.txt", "r", encoding="utf-8") as f:
+with open("Data\Corpus.txt", "r", encoding="utf-8") as f:
     text = f.read()
 
 print(text[:500])
-text_tokens = re.findall(r"\b\w+\b", text.lower())
-print(len(text_tokens))
 
 
-# In[10]:
+# In[23]:
 
 
 brown_tokens = [w.lower() for w in brown.words() if w.isalpha()]
-print(brown_tokens[:50])
-print(len(brown_tokens))
+text_tokens = re.findall(r"\b\w+\b", text.lower())
 
 
-# In[11]:
+# In[24]:
 
 
 brown_counter = Counter(brown_tokens)
@@ -107,17 +104,14 @@ text_counter = Counter(text_tokens)
 total_brown = sum(brown_counter.values())
 total_text = sum(text_counter.values())
 
-
-# In[12]:
-
-
 print(brown_counter)
+print(text_counter)
 
 
 # ___
 # ### Calculation of global and local frequencies
 
-# In[61]:
+# In[25]:
 
 
 df["word_lower"] = df["WORD"].str.replace(r"[^a-zA-Z]", "", regex=True).str.lower()
@@ -127,10 +121,10 @@ df["global_freq_rel"] = df["global_freq_abs"]/total_brown
 df["local_freq_rel"] = df["local_freq_abs"]/total_text
 df["log_global_rel"] = np.log1p(df["global_freq_rel"])
 df["log_local_rel"] = np.log1p(df["local_freq_rel"])
-print(df[["WORD", "word_lower", "global_freq_abs", "local_freq_abs", "global_freq_rel", "local_freq_rel", "log_global_rel", "log_local_rel"]].tail(80))
+print(df[["WORD", "word_lower", "global_freq_abs", "local_freq_abs", "global_freq_rel", "local_freq_rel", "log_global_rel", "log_local_rel"]].tail(20))
 
 
-# In[62]:
+# In[26]:
 
 
 df[["log_global_rel", "log_local_rel"]].corr()
@@ -139,27 +133,24 @@ df[["log_global_rel", "log_local_rel"]].corr()
 # ___
 # ### Adding word length column
 
-# In[14]:
+# In[27]:
 
 
 df["word_length"] = df["word_lower"].str.len()
-print(df[["word_lower", "word_length", "word_pos_in_sentence", "log_global_rel", "log_local_rel", "WORD_GAZE_DURATION"]].tail(80))
+print(df[["word_lower", "word_length", "word_pos_in_sentence", "log_global_rel", "log_local_rel", "WORD_GAZE_DURATION"]].tail(20))
 
 
 # ___
-# ### Linear model using grid search(unvectorized and the vectorized for better performance)
+# ### Linear model using grid search (unvectorized and then vectorized for better performance)
 
-# In[56]:
+# In[28]:
 
 
 df_clean = df[df["WORD_GAZE_DURATION"].apply(lambda x: str(x).isdigit())].copy()
-
 df_clean["WORD_GAZE_DURATION"] = df_clean["WORD_GAZE_DURATION"].astype(float)
 
-print(df_clean[["word_lower", "word_length", "word_pos_in_sentence", "log_global_rel", "log_local_rel", "WORD_GAZE_DURATION"]].tail(80))
 
-
-# In[33]:
+# In[29]:
 
 
 def predict_gaze_duration(row, weights, bias):
@@ -202,15 +193,20 @@ def grid_search(param_range, stepsize, init_weights, bias):
 # In[ ]:
 
 
-weights = [1,1,1]
-bias = 1
+init_weights = np.random.uniform(-10, 10, size=3).tolist()
+init_bias = np.random.uniform(-10, 10)
 
-best_weights, best_mse, _ = grid_search(5, 0.5, weights, bias)
-print(best_mse)
-print(best_weights)
+best_weights, best_mse, _ = grid_search(2, 0.5, init_weights, init_bias)
+
+print("Best Weights:", best_weights)
+print("Best MSE:", best_mse)
 
 
-# In[46]:
+# > **Performance Warning**  
+# This pure-Python grid search loops over every row for each weight combo—extremely slow. We’ll switch to a fully vectorized approach instead.
+# ___
+
+# In[39]:
 
 
 df_clean = df_clean.dropna(subset=["word_length", "word_pos_in_sentence", "log_global_rel", "WORD_GAZE_DURATION"]).copy()
@@ -253,44 +249,37 @@ def grid_search(X, y, param_range, stepsize, init_weights, init_bias):
     return best_weights, best_bias, best_mse, mse_list
 
 
+# In[42]:
+
+
+# Settings: (param_range, stepsize)
+refinements = [(20, 2), (5, 0.5), (2, 0.2)]
+
+# Initialisation
 init_weights = np.random.uniform(-10, 10, size=3).tolist()
-init_bias = np.random.uniform(-10, 10)
+init_bias    = np.random.uniform(-10, 10)
 
-best_weights, best_bias, best_mse, results = grid_search(X, y, param_range=20, stepsize=2, init_weights=init_weights, init_bias=init_bias)
-
-print("Best Weights:", best_weights)
-print("Best bias:", best_bias)
-print("Best MSE:", best_mse)
-
-
-# In[47]:
-
-
-init_weights = best_weights
-bias = best_bias
-best_weights, best_bias, best_mse, results = grid_search(X, y, param_range=5, stepsize=0.5, init_weights=init_weights, init_bias=bias)
-
-print("Best Weights:", best_weights)
-print("Best bias:", best_bias)
-print("Best MSE:", best_mse)
+for pr, ss in refinements:
+    best_weights, best_bias, best_mse, _ = grid_search(
+        X, y,
+        param_range=pr,
+        stepsize=ss,
+        init_weights=init_weights,
+        init_bias=init_bias
+    )
+    print(f"Range={pr}, Step={ss} → Best MSE: {best_mse:.2f}, Weights: {best_weights}, Bias: {best_bias}")
+    # for the next refinement run
+    init_weights = best_weights
+    init_bias    = best_bias
 
 
-# In[48]:
-
-
-init_weights = best_weights
-bias = best_bias
-best_weights, best_bias, best_mse, results = grid_search(X, y, param_range=2, stepsize=0.2, init_weights=init_weights, init_bias=bias)
-
-print("Best Weights:", best_weights)
-print("Best bias:", best_bias)
-print("Best MSE:", best_mse)
-
+# > **Performance Warning**  
+# This is still extremely slow. We’ll switch to a fully gradient descent-based approach instead.
 
 # ___
 # ### Comparison with Gradient Descent-Based Regression Model
 
-# In[79]:
+# In[34]:
 
 
 def predict_gaze_duration(X, weights, bias):
@@ -337,7 +326,7 @@ print("Best bias:", best_bias)
 print("Best MSE:", best_mse)
 
 
-# In[81]:
+# In[35]:
 
 
 import matplotlib.pyplot as plt
@@ -361,4 +350,224 @@ comparison_df = pd.DataFrame({
 })
 
 print(comparison_df.head(10))
+
+
+# ___
+# #### The following cell fetches GPT embeddings for all unique words and saves them to a local cache file (`embeddings_dict.pkl`). On later runs, there is <span style="color:red">no need to run the following cell</span>.  
+# 
+
+# In[ ]:
+
+
+from openai import OpenAI
+import time
+import openai
+import pickle
+
+#Add api key
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+#function to get embeddings
+def get_embedding(word, retries=5, wait=1):
+    for attempt in range(retries):
+        try:
+            response = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=word
+            )
+            return response.data[0].embedding
+        except openai.RateLimitError:
+            print(f"Rate Limit erreicht bei '{word}' – Versuch {attempt + 1}, warte {wait}s...")
+            time.sleep(wait)
+            wait *= 2
+        except Exception as e:
+            print(f"Fehler bei Wort '{word}': {e}")
+            return None
+    print(f"Fehlgeschlagen nach {retries} Versuchen: '{word}'")
+    return None
+
+
+#Getting all the unique words to spare api requests
+unique_words = df_clean["word_lower"].dropna().unique()
+
+#get embeddings for every word
+embedding_dict = {}
+
+for i, word in enumerate(unique_words):
+    embedding = get_embedding(word)
+    if embedding:
+        embedding_dict[word] = embedding
+    time.sleep(0.1)
+
+
+#save the dictionary as pkl file
+with open("embeddings_dict.pkl", "wb") as f:
+    pickle.dump(embedding_dict, f)
+
+
+# ___
+# ### Loading the pkl file that contains the embeddings and checking for errors
+
+# In[ ]:
+
+
+import torch
+from torch.utils.data import TensorDataset, random_split, DataLoader
+import pickle
+
+unique_words = df_clean["word_lower"].dropna().unique()
+
+#Load and check data
+with open("embeddings_dict.pkl", "rb") as f:
+    embedding_dict = pickle.load(f)
+
+
+print(f"Entries: {len(embedding_dict)}")
+
+
+df_emb = pd.DataFrame({
+    "word": list(embedding_dict.keys()),
+    "emb_length": [len(v) for v in embedding_dict.values()],
+    "sample_vals": [v[:5] for v in embedding_dict.values()]
+})
+
+print(df_emb.head())
+
+missing = set(unique_words) - set(embedding_dict.keys())
+print(f"Words without embedding: {len(missing)}")
+
+
+# In[ ]:
+
+
+df_clean["embedding"] = df_clean["word_lower"].map(embedding_dict)
+print(len(df_clean))
+df_clean = df_clean.dropna(subset=["embedding"]).reset_index(drop=True)
+
+X_embed = np.vstack(df_clean["embedding"].values)
+y       = df_clean["WORD_GAZE_DURATION"].values  
+
+
+# In[ ]:
+
+
+print("Samples in X:", X_embed.shape[0])
+print("Samples in y:", y.shape[0])
+assert X_embed.shape[0] == y.shape[0], "Längen stimmen nicht überein!"
+
+
+# In[ ]:
+
+
+import torch
+from torch.utils.data import TensorDataset, random_split, DataLoader
+
+df_clean["log_gaze"] = np.log1p(df_clean["WORD_GAZE_DURATION"])
+
+y = torch.from_numpy(df_clean["log_gaze"].values).float().unsqueeze(1)
+
+X = torch.from_numpy(X_embed).float()
+ds = TensorDataset(X, y)
+
+n_train = int(len(ds) * 0.8)
+n_test  = len(ds) - n_train
+train_ds, test_ds = random_split(ds, [n_train, n_test], generator=torch.Generator().manual_seed(42))
+
+train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
+test_loader  = DataLoader(test_ds,  batch_size=64)
+
+
+# In[ ]:
+
+
+import torch.nn as nn
+from torch.utils.data import TensorDataset, random_split, DataLoader
+from torch.utils.tensorboard import SummaryWriter
+
+
+# In[ ]:
+
+
+# ─── Modell auf GPU ────────────────────────────────────────────────────────────
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("Using device:", device)
+
+class GazeNet(nn.Module):
+    def __init__(self, emb_dim):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(emb_dim, 512),
+            nn.ReLU(),
+            nn.Linear(512, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+model = GazeNet(emb_dim=X.shape[1]).to(device)
+
+# ─── Loss, Optimizer, Scheduler & TensorBoard ────────────────────────────────
+criterion = nn.MSELoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+writer = SummaryWriter("runs/gaze_duration_experiment_v2")
+
+# ─── Trainingsloop ────────────────────────────────────────────────────────────
+n_epochs = 50
+global_step = 0
+
+for epoch in range(1, n_epochs + 1):
+    # --- Training ---
+    model.train()
+    running_loss = 0.0
+    for batch_idx, (Xb, yb) in enumerate(train_loader):
+        Xb = Xb.to(device, non_blocking=True)
+        yb = yb.to(device, non_blocking=True)
+
+        optimizer.zero_grad()
+        preds = model(Xb)
+        loss = criterion(preds, yb)
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item() * Xb.size(0)
+        # Batch-Logging
+        writer.add_scalar("Loss/Train_batch", loss.item(), global_step)
+        writer.flush()
+        global_step += 1
+
+    train_mse = running_loss / len(train_loader.dataset)
+    writer.add_scalar("MSE/Train_epoch", train_mse, epoch)
+    writer.flush()
+
+    # --- Histogram logging einmal pro Epoche ---
+    for name, param in model.named_parameters():
+        writer.add_histogram(f"Weights/{name}", param, epoch)
+        writer.flush()
+
+    # --- Validation ---
+    model.eval()
+    val_loss = 0.0
+    with torch.no_grad():
+        for Xb, yb in test_loader:
+            Xb = Xb.to(device, non_blocking=True)
+            yb = yb.to(device, non_blocking=True)
+            preds = model(Xb)
+            val_loss += criterion(preds, yb).item() * Xb.size(0)
+
+    val_mse = val_loss / len(test_loader.dataset)
+    writer.add_scalar("MSE/Validation", val_mse, epoch)
+    writer.flush()
+
+    print(f"Epoch {epoch:02d}/{n_epochs} — Train MSE: {train_mse:.2f}, Val MSE: {val_mse:.2f}")
+    scheduler.step()
+
+# ─── Abschluss ────────────────────────────────────────────────────────────────
+writer.close()
+
+# ─── TensorBoard starten im Terminal ───────────────────────────────────────────
+# tensorboard --logdir=runs/gaze_duration_experiment_v2 --host=0.0.0.0 --port=6006
+# Im Browser: http://localhost:6006
 
