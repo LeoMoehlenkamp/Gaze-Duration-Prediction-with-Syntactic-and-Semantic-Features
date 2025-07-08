@@ -1,3 +1,5 @@
 *.xlsx
 *.csv
 *.env
+df_cluster.pkl
+embeddings_dict.pkl
