@@ -4,35 +4,33 @@
 # ___
 # ### Import data, all needed packages and display data
 
-# In[16]:
+# In[1]:
 
 
-import pandas as pd # type: ignore
-import numpy as np # type: ignore
+import pandas as pd
+import numpy as np
 import re
-import nltk # type: ignore
+import nltk
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+
 nltk.download("brown")
-from nltk.corpus import brown # type: ignore
+from nltk.corpus import brown
 from collections import Counter
 pd.set_option("display.max_rows", 100)
 pd.set_option("display.expand_frame_repr", False)
 
-from dotenv import load_dotenv # type: ignore
-import os
-import openai # type: ignore
-load_dotenv()
-openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# In[2]:
 
 
-# In[17]:
-
-
-import torch # type: ignore
+import torch
 print(torch.cuda.is_available())           # → True
 print(torch.cuda.get_device_name(0))       # → NVIDIA GeForce RTX 4060 Ti
 
 
-# In[18]:
+# In[3]:
 
 
 use_cols = ["WORD", "WORD_GAZE_DURATION"]
@@ -43,7 +41,7 @@ print(df.head())
 # ___
 # ### Create new columns that are needed for later modeling
 
-# In[19]:
+# In[4]:
 
 
 # find end of sentence
@@ -65,13 +63,13 @@ df.loc[0, "sentence_id"] = 1
 df["word_pos_in_sentence"] = df.groupby("sentence_id").cumcount() + 1
 
 
-# In[20]:
+# In[5]:
 
 
 print(df[["is_sentence_start", "is_sentence_end"]].head(20))
 
 
-# In[21]:
+# In[6]:
 
 
 print(df[["WORD", "is_sentence_end", "sentence_id", "word_pos_in_sentence"]].tail(20))
@@ -80,7 +78,7 @@ print(df[["WORD", "is_sentence_end", "sentence_id", "word_pos_in_sentence"]].tai
 # ___
 # ### Import text from experiment and nltk corpus for global and local frequency calculation
 
-# In[22]:
+# In[7]:
 
 
 with open("Data\Corpus.txt", "r", encoding="utf-8") as f:
@@ -89,14 +87,14 @@ with open("Data\Corpus.txt", "r", encoding="utf-8") as f:
 print(text[:500])
 
 
-# In[23]:
+# In[8]:
 
 
 brown_tokens = [w.lower() for w in brown.words() if w.isalpha()]
 text_tokens = re.findall(r"\b\w+\b", text.lower())
 
 
-# In[24]:
+# In[9]:
 
 
 brown_counter = Counter(brown_tokens)
@@ -111,7 +109,7 @@ print(text_counter)
 # ___
 # ### Calculation of global and local frequencies
 
-# In[25]:
+# In[10]:
 
 
 df["word_lower"] = df["WORD"].str.replace(r"[^a-zA-Z]", "", regex=True).str.lower()
@@ -124,7 +122,7 @@ df["log_local_rel"] = np.log1p(df["local_freq_rel"])
 print(df[["WORD", "word_lower", "global_freq_abs", "local_freq_abs", "global_freq_rel", "local_freq_rel", "log_global_rel", "log_local_rel"]].tail(20))
 
 
-# In[26]:
+# In[11]:
 
 
 df[["log_global_rel", "log_local_rel"]].corr()
@@ -133,7 +131,7 @@ df[["log_global_rel", "log_local_rel"]].corr()
 # ___
 # ### Adding word length column
 
-# In[27]:
+# In[12]:
 
 
 df["word_length"] = df["word_lower"].str.len()
@@ -143,14 +141,15 @@ print(df[["word_lower", "word_length", "word_pos_in_sentence", "log_global_rel",
 # ___
 # ### Linear model using grid search (unvectorized and then vectorized for better performance)
 
-# In[28]:
+# In[13]:
 
 
 df_clean = df[df["WORD_GAZE_DURATION"].apply(lambda x: str(x).isdigit())].copy()
 df_clean["WORD_GAZE_DURATION"] = df_clean["WORD_GAZE_DURATION"].astype(float)
+df_clean = df_clean.dropna(subset=["word_lower"]).reset_index(drop=True)
 
 
-# In[29]:
+# In[14]:
 
 
 def predict_gaze_duration(row, weights, bias):
@@ -190,7 +189,7 @@ def grid_search(param_range, stepsize, init_weights, bias):
     return best_weights, best_mse, mse_list
 
 
-# In[ ]:
+# In[15]:
 
 
 init_weights = np.random.uniform(-10, 10, size=3).tolist()
@@ -206,7 +205,7 @@ print("Best MSE:", best_mse)
 # This pure-Python grid search loops over every row for each weight combo—extremely slow. We’ll switch to a fully vectorized approach instead.
 # ___
 
-# In[39]:
+# In[16]:
 
 
 df_clean = df_clean.dropna(subset=["word_length", "word_pos_in_sentence", "log_global_rel", "WORD_GAZE_DURATION"]).copy()
@@ -249,7 +248,7 @@ def grid_search(X, y, param_range, stepsize, init_weights, init_bias):
     return best_weights, best_bias, best_mse, mse_list
 
 
-# In[42]:
+# In[23]:
 
 
 # Settings: (param_range, stepsize)
@@ -259,6 +258,9 @@ refinements = [(20, 2), (5, 0.5), (2, 0.2)]
 init_weights = np.random.uniform(-10, 10, size=3).tolist()
 init_bias    = np.random.uniform(-10, 10)
 
+# Liste zum Sammeln der Results
+results = []  # wird (param_range, best_mse)
+
 for pr, ss in refinements:
     best_weights, best_bias, best_mse, _ = grid_search(
         X, y,
@@ -267,10 +269,28 @@ for pr, ss in refinements:
         init_weights=init_weights,
         init_bias=init_bias
     )
-    print(f"Range={pr}, Step={ss} → Best MSE: {best_mse:.2f}, Weights: {best_weights}, Bias: {best_bias}")
-    # for the next refinement run
+    print(f"Range={pr}, Step={ss} → Best MSE: {best_mse:.2f}")
+    results.append((pr, best_mse))
+
+    # für die nächste Verfeinerung
     init_weights = best_weights
     init_bias    = best_bias
+
+# --- Plot nach der Schleife ---
+param_ranges = [r for r, _ in results]
+best_mses    = [m for _, m in results]
+
+runs = list(range(1, len(best_mses) + 1))
+
+plt.figure(figsize=(6, 4))
+plt.plot(runs, best_mses, marker='o', linewidth=2)
+plt.xticks(runs, [f"Run {i}" for i in runs])
+plt.xlabel("Grid Search Run")
+plt.ylabel("Best MSE")
+plt.title("Best MSE per Run")
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
 
 
 # > **Performance Warning**  
@@ -279,7 +299,7 @@ for pr, ss in refinements:
 # ___
 # ### Comparison with Gradient Descent-Based Regression Model
 
-# In[34]:
+# In[24]:
 
 
 def predict_gaze_duration(X, weights, bias):
@@ -324,14 +344,12 @@ weights, bias, best_mse, mse_list, preds = gradient_descent(X, y, init_weights, 
 print("Best Weights:", best_weights)
 print("Best bias:", best_bias)
 print("Best MSE:", best_mse)
+print("Best RMSE (ms):", np.sqrt(best_mse), "ms")
 
 
-# In[35]:
+# In[25]:
 
 
-import matplotlib.pyplot as plt # type: ignore
-
-# mse_list kommt direkt aus deinem gradient_descent()-Output
 plt.figure(figsize=(10, 5))
 plt.plot(mse_list, label="MSE per Epoch", color="blue")
 plt.xlabel("Epoch")
@@ -349,20 +367,42 @@ comparison_df = pd.DataFrame({
     "gaze_duration_predicted": preds
 })
 
-print(comparison_df.head(10))
-
 
 # ___
+# ## GPT embeddings and ANN
+# 
 # #### The following cell fetches GPT embeddings for all unique words and saves them to a local cache file (`embeddings_dict.pkl`). On later runs, there is <span style="color:red">no need to run the following cell</span>.  
 # 
+
+# In[56]:
+
+
+from openai import OpenAI
+import time
+import openai
+import pickle
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+#Add api key
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 # In[ ]:
 
 
-from openai import OpenAI # type: ignore
+from openai import OpenAI
 import time
-import openai # type: ignore
+import openai
 import pickle
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 #Add api key
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -405,15 +445,15 @@ with open("embeddings_dict.pkl", "wb") as f:
     pickle.dump(embedding_dict, f)
 
 
-# ___
-# ### Loading the pkl file that contains the embeddings and checking for errors
+# ### Load the pkl file that contains the embeddings
 
-# In[ ]:
+# In[26]:
 
 
-import torch # type: ignore
-from torch.utils.data import TensorDataset, random_split, DataLoader # type: ignore
+import torch
+from torch.utils.data import TensorDataset, random_split, DataLoader
 import pickle
+import torch.nn as nn
 
 unique_words = df_clean["word_lower"].dropna().unique()
 
@@ -422,152 +462,779 @@ with open("embeddings_dict.pkl", "rb") as f:
     embedding_dict = pickle.load(f)
 
 
-print(f"Entries: {len(embedding_dict)}")
+# ### Prepare Embeddings, Transform Target & Create DataLoaders
 
-
-df_emb = pd.DataFrame({
-    "word": list(embedding_dict.keys()),
-    "emb_length": [len(v) for v in embedding_dict.values()],
-    "sample_vals": [v[:5] for v in embedding_dict.values()]
-})
-
-print(df_emb.head())
-
-missing = set(unique_words) - set(embedding_dict.keys())
-print(f"Words without embedding: {len(missing)}")
-
-
-# In[ ]:
+# In[28]:
 
 
 df_clean["embedding"] = df_clean["word_lower"].map(embedding_dict)
-print(len(df_clean))
-df_clean = df_clean.dropna(subset=["embedding"]).reset_index(drop=True)
 
 X_embed = np.vstack(df_clean["embedding"].values)
 y       = df_clean["WORD_GAZE_DURATION"].values  
 
-
-# In[ ]:
-
-
-print("Samples in X:", X_embed.shape[0])
-print("Samples in y:", y.shape[0])
-assert X_embed.shape[0] == y.shape[0], "Längen stimmen nicht überein!"
-
-
-# In[ ]:
-
-
-import torch # type: ignore
-from torch.utils.data import TensorDataset, random_split, DataLoader # type: ignore
-
 df_clean["log_gaze"] = np.log1p(df_clean["WORD_GAZE_DURATION"])
 
 y = torch.from_numpy(df_clean["log_gaze"].values).float().unsqueeze(1)
-
 X = torch.from_numpy(X_embed).float()
+# Dataset
 ds = TensorDataset(X, y)
 
-n_train = int(len(ds) * 0.8)
-n_test  = len(ds) - n_train
-train_ds, test_ds = random_split(ds, [n_train, n_test], generator=torch.Generator().manual_seed(42))
+# Größen berechnen
+n = len(ds)
+n_train = int(0.8 * n)
+n_temp  = n - n_train
+n_val   = n_temp // 2
+n_test  = n_temp - n_val
 
+# Zufällige Aufteilung mit festem Seed
+train_ds, val_ds, test_ds = random_split(
+    ds,
+    [n_train, n_val, n_test],
+    generator=torch.Generator().manual_seed(42)
+)
+
+# DataLoader
 train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
-test_loader  = DataLoader(test_ds,  batch_size=64)
+val_loader   = DataLoader(val_ds,   batch_size=64, shuffle=False)
+test_loader  = DataLoader(test_ds,  batch_size=64, shuffle=False)
+
+print(f"Train: {len(train_ds)}  Val: {len(val_ds)}  Test: {len(test_ds)}")
 
 
-# In[ ]:
+# ### Define & Train Neural Network Model
+
+# In[29]:
 
 
-import torch.nn as nn # type: ignore
-from torch.utils.data import TensorDataset, random_split, DataLoader # type: ignore
-from torch.utils.tensorboard import SummaryWriter # type: ignore
-
-
-# In[ ]:
-
-
-# ─── Modell auf GPU ────────────────────────────────────────────────────────────
+# --- Model Definition ---
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Using device:", device)
 
 class GazeNet(nn.Module):
-    def __init__(self, emb_dim):
+    def __init__(self, input_dim):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(emb_dim, 512),
+            nn.Linear(input_dim, 512),
             nn.ReLU(),
             nn.Linear(512, 128),
             nn.ReLU(),
             nn.Linear(128, 1)
         )
-
     def forward(self, x):
         return self.net(x)
 
-model = GazeNet(emb_dim=X.shape[1]).to(device)
+model_semantic = GazeNet(input_dim=X.shape[1]).to(device)
 
-# ─── Loss, Optimizer, Scheduler & TensorBoard ────────────────────────────────
+# --- Loss & Optimizer ---
 criterion = nn.MSELoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
-writer = SummaryWriter("runs/gaze_duration_experiment_v2")
+optimizer = torch.optim.Adam(model_semantic.parameters(), lr=1e-3)
 
-# ─── Trainingsloop ────────────────────────────────────────────────────────────
+# --- Training Loop with Validation ---
 n_epochs = 50
-global_step = 0
+train_mses = []
+val_mses   = []
 
-for epoch in range(1, n_epochs + 1):
-    # --- Training ---
-    model.train()
-    running_loss = 0.0
-    for batch_idx, (Xb, yb) in enumerate(train_loader):
-        Xb = Xb.to(device, non_blocking=True)
-        yb = yb.to(device, non_blocking=True)
-
+for epoch in range(1, n_epochs+1):
+    # Training
+    model_semantic.train()
+    total_train = 0.0
+    for Xb, yb in train_loader:
+        Xb, yb = Xb.to(device), yb.to(device)
         optimizer.zero_grad()
-        preds = model(Xb)
+        preds = model_semantic(Xb)
         loss = criterion(preds, yb)
         loss.backward()
         optimizer.step()
+        total_train += loss.item() * Xb.size(0)
+    train_mse = total_train / len(train_loader.dataset)
+    train_mses.append(train_mse)
 
-        running_loss += loss.item() * Xb.size(0)
-        # Batch-Logging
-        writer.add_scalar("Loss/Train_batch", loss.item(), global_step)
-        writer.flush()
-        global_step += 1
-
-    train_mse = running_loss / len(train_loader.dataset)
-    writer.add_scalar("MSE/Train_epoch", train_mse, epoch)
-    writer.flush()
-
-    # --- Histogram logging einmal pro Epoche ---
-    for name, param in model.named_parameters():
-        writer.add_histogram(f"Weights/{name}", param, epoch)
-        writer.flush()
-
-    # --- Validation ---
-    model.eval()
-    val_loss = 0.0
+    # Validation
+    model_semantic.eval()
+    total_val = 0.0
     with torch.no_grad():
-        for Xb, yb in test_loader:
-            Xb = Xb.to(device, non_blocking=True)
-            yb = yb.to(device, non_blocking=True)
-            preds = model(Xb)
-            val_loss += criterion(preds, yb).item() * Xb.size(0)
+        for Xb, yb in val_loader:
+            Xb, yb = Xb.to(device), yb.to(device)
+            preds = model_semantic(Xb)
+            total_val += criterion(preds, yb).item() * Xb.size(0)
+    val_mse = total_val / len(val_loader.dataset)
+    val_mses.append(val_mse)
 
-    val_mse = val_loss / len(test_loader.dataset)
-    writer.add_scalar("MSE/Validation", val_mse, epoch)
-    writer.flush()
+    print(f"Epoch {epoch:02d}/{n_epochs} — Train MSE: {train_mse:.4f}, Val MSE: {val_mse:.4f}")
 
-    print(f"Epoch {epoch:02d}/{n_epochs} — Train MSE: {train_mse:.2f}, Val MSE: {val_mse:.2f}")
-    scheduler.step()
+# --- Plotting Train vs. Validation MSE ---
+epochs = list(range(1, n_epochs+1))
+plt.figure(figsize=(8,5))
+plt.plot(epochs, train_mses, label="Train MSE", marker='o')
+plt.plot(epochs, val_mses,   label="Val   MSE", marker='s')
+plt.xlabel("Epoch")
+plt.ylabel("MSE")
+plt.title("Training vs. Validation MSE per Epoch")
+plt.legend()
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
 
-# ─── Abschluss ────────────────────────────────────────────────────────────────
-writer.close()
 
-# ─── TensorBoard starten im Terminal ───────────────────────────────────────────
-# tensorboard --logdir=runs/gaze_duration_experiment_v2 --host=0.0.0.0 --port=6006
-# Im Browser: http://localhost:6006
+# In[30]:
+
+
+torch.save(model_semantic.state_dict(), "model_semantic_weights.pth")
+print("model_semantic-weights saved")
+
+
+# ### Evaluate Model & Compute Final MSE/RMSE
+
+# In[31]:
+
+
+# Modell in Eval-Mode
+model_semantic.eval()
+preds_log, trues_log = [], []
+
+with torch.no_grad():
+    for Xb, yb in test_loader:
+        Xb, yb = Xb.to(device), yb.to(device)
+        out = model_semantic(Xb)
+        preds_log.append(out.cpu().numpy())
+        trues_log.append(yb.cpu().numpy())
+
+# Arrays zusammenführen
+preds_log = np.vstack(preds_log).ravel()
+trues_log = np.vstack(trues_log).ravel()
+
+# Log-MSE
+mse_log = np.mean((preds_log - trues_log)**2)
+
+# Rücktransform und Original-MSE/RMSE
+preds_ms = np.expm1(preds_log)
+trues_ms = np.expm1(trues_log)
+mse_ms  = np.mean((preds_ms - trues_ms)**2)
+rmse_ms = np.sqrt(mse_ms)
+
+print(f"Final Test MSE (log scale): {mse_log:.4f}")
+print(f"Final Test MSE (ms):        {mse_ms:.4f}")
+print(f"Final Test RMSE (ms):       {rmse_ms:.1f} ms")
+
+
+# ___
+# ### Combine Semantic & Syntactic Features
+
+# In[32]:
+
+
+df_clean["embedding"] = df_clean["word_lower"].map(embedding_dict)
+
+X_embed = np.vstack(df_clean["embedding"].values)
+X_syntax = df_clean[["word_length","word_pos_in_sentence","log_global_rel"]].values
+X_comb = np.hstack([X_embed, X_syntax])
+
+df_clean["log_gaze"] = np.log1p(df_clean["WORD_GAZE_DURATION"])
+
+y = torch.from_numpy(df_clean["log_gaze"].values).float().unsqueeze(1)
+X = torch.from_numpy(X_comb).float()
+ds = TensorDataset(X, y)
+
+n     = len(ds)
+n_train = int(0.8 * n)
+n_temp  = n - n_train
+n_val   = n_temp // 2
+n_test  = n_temp - n_val 
+
+
+train_ds, val_ds, test_ds = random_split(
+    ds,
+    [n_train, n_val, n_test],
+    generator=torch.Generator().manual_seed(42)
+)
+
+
+train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
+val_loader   = DataLoader(val_ds,   batch_size=64, shuffle=False)
+test_loader  = DataLoader(test_ds,  batch_size=64, shuffle=False)
+
+print(f"Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}")
+
+
+# ### Define & Train Neural Network Model
+
+# In[33]:
+
+
+# --- Model & Device wie gehabt ---
+model_combined = GazeNet(input_dim=X.shape[1]).to(device)
+
+# Loss & Optimizer
+criterion = nn.MSELoss()
+optimizer = torch.optim.Adam(model_combined.parameters(), lr=1e-3)
+
+# --- Training Loop mit Validation ---
+n_epochs = 50
+train_mses = []
+val_mses   = []
+
+for epoch in range(1, n_epochs+1):
+    # --- Training ---
+    model_combined.train()
+    total_train = 0.0
+    for Xb, yb in train_loader:
+        Xb, yb = Xb.to(device), yb.to(device)
+        optimizer.zero_grad()
+        preds = model_combined(Xb)
+        loss = criterion(preds, yb)
+        loss.backward()
+        optimizer.step()
+        total_train += loss.item() * Xb.size(0)
+    train_mse = total_train / len(train_loader.dataset)
+    train_mses.append(train_mse)
+
+    # --- Validation auf val_loader ---
+    model_combined.eval()
+    total_val = 0.0
+    with torch.no_grad():
+        for Xb, yb in val_loader:
+            Xb, yb = Xb.to(device), yb.to(device)
+            preds = model_combined(Xb)
+            total_val += criterion(preds, yb).item() * Xb.size(0)
+    val_mse = total_val / len(val_loader.dataset)
+    val_mses.append(val_mse)
+
+    print(f"Epoch {epoch:02d}/{n_epochs} — Train MSE: {train_mse:.4f}, Val MSE: {val_mse:.4f}")
+
+# --- Plot Training vs. Validation MSE ---
+import matplotlib.pyplot as plt
+
+epochs = list(range(1, n_epochs+1))
+plt.figure(figsize=(8,5))
+plt.plot(epochs, train_mses, label="Train MSE", marker='o')
+plt.plot(epochs, val_mses,   label="Val   MSE", marker='s')
+plt.xlabel("Epoch")
+plt.ylabel("MSE")
+plt.title("Combined Model — Train vs. Validation MSE")
+plt.legend()
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+
+# In[34]:
+
+
+torch.save(model_combined.state_dict(), "model_combined_weights.pth")
+print("model_combined-weights saved")
+
+
+# ### Evaluate Model & Compute Final MSE/RMSE
+
+# In[35]:
+
+
+# Modell in Eval-Mode
+model_combined.eval()
+preds_log, trues_log = [], []
+
+with torch.no_grad():
+    for Xb, yb in test_loader:
+        Xb, yb = Xb.to(device), yb.to(device)
+        out = model_combined(Xb)
+        preds_log.append(out.cpu().numpy())
+        trues_log.append(yb.cpu().numpy())
+
+# Arrays zusammenführen
+preds_log = np.vstack(preds_log).ravel()
+trues_log = np.vstack(trues_log).ravel()
+
+# Log-MSE
+mse_log = np.mean((preds_log - trues_log)**2)
+
+# Rücktransform und Original-MSE/RMSE
+preds_ms = np.expm1(preds_log)
+trues_ms = np.expm1(trues_log)
+mse_ms  = np.mean((preds_ms - trues_ms)**2)
+rmse_ms = np.sqrt(mse_ms)
+
+print(f"Final Test MSE (log scale): {mse_log:.4f}")
+print(f"Final Test MSE (ms):        {mse_ms:.4f}")
+print(f"Final Test RMSE (ms):       {rmse_ms:.1f} ms")
+
+
+# ___
+
+# In[ ]:
+
+
+EMBED_DIM = len(next(iter(embedding_dict.values())))
+def load_model(path, input_dim):
+    m = GazeNet(input_dim).to(device)
+    m.load_state_dict(torch.load(path, map_location=device))
+    m.eval()
+    return m
+
+MODEL_SEMANTIC = load_model("model_semantic_weights.pth", EMBED_DIM)
+MODEL_COMBINED = load_model("model_combined_weights.pth", EMBED_DIM + 3)
+
+# Preprocessing Functions
+def preprocess_semantic(sentence):
+    X = []
+    for w in sentence:
+        wl = w.lower()
+        X.append(embedding_dict.get(wl, np.zeros(EMBED_DIM)))
+    return torch.from_numpy(np.vstack(X)).float().to(device)
+
+def preprocess_combined(sentence):
+    X_sem, X_syn = [], []
+    for idx, w in enumerate(sentence):
+        wl = w.lower()
+        emb = embedding_dict.get(wl, np.zeros(EMBED_DIM))
+        length   = len(wl)
+        position = idx + 1
+        log_glob = np.log1p(brown_counter[wl] / total_brown)
+        X_sem.append(emb)
+        X_syn.append([length, position, log_glob])
+    X_sem = np.vstack(X_sem)
+    X_syn = np.vstack(X_syn)
+    return torch.from_numpy(np.hstack([X_sem, X_syn])).float().to(device)
+
+# Prediction Wrappers
+def predict_semantic(sentence):
+    X = preprocess_semantic(sentence)
+    with torch.no_grad():
+        preds_log = MODEL_SEMANTIC(X).cpu().numpy().ravel()
+    return np.expm1(preds_log)
+
+def predict_combined(sentence):
+    X = preprocess_combined(sentence)
+    with torch.no_grad():
+        preds_log = MODEL_COMBINED(X).cpu().numpy().ravel()
+    return np.expm1(preds_log)
+
+# Example Usage
+sentence = ["This", "is", "an", "example", "Sentence", "."]
+print("Semantic-only preds:     ", predict_semantic(sentence))
+print("Semantic+Syntax preds:   ", predict_combined(sentence))
+
+
+# In[ ]:
+
+
+# Extract first sentence from your cleaned DataFrame
+first_sent = df_clean[df_clean["sentence_id"] == 1].reset_index(drop=True)
+words       = first_sent["WORD"].tolist()
+actual_ms   = first_sent["WORD_GAZE_DURATION"].tolist()
+
+# Get predictions (semantic+syntax)
+predicted_ms_semantic = predict_semantic(words)
+predicted_ms_combined = predict_combined(words)
+
+df_compare = pd.DataFrame({
+    "word":      words,
+    "actual_ms": actual_ms,
+    "pred_ms_semantic":   np.round(predicted_ms_semantic, 1),
+    "predicted_ms_combined":   np.round(predicted_ms_combined, 1)
+})
+
+print(df_compare)
+
+
+# In[38]:
+
+
+from sklearn.decomposition import PCA
+import numpy as np
+df_unique = df_clean.drop_duplicates(subset="word_lower").copy()
+X_embed = np.vstack(df_unique["embedding"].values)
+# 1) PCA ohne Dim-Limit fitten (oder n_components=X_embed.shape[1])
+pca_full = PCA().fit(X_embed)
+
+# 2) Kumulierte Varianz berechnen
+cum_var = np.cumsum(pca_full.explained_variance_ratio_)
+
+# 3) Index finden, ab dem ≥80 %
+n_80 = np.searchsorted(cum_var, 0.8) + 1
+print(f"Anzahl PCs für ≥80 % Varianz: {n_80}")
+print(f"Kumulierte Varianz bei PC{n_80}: {cum_var[n_80-1]:.3f}")
+
+
+# ___
+# ### From here on all code can be skipped, since the data generated here is saved as df_clusters.pkl. Run the code where it says "RUN FROM HERE"
+
+# In[63]:
+
+
+df_unique = df_clean.drop_duplicates(subset="word_lower").copy()
+X_embed = np.vstack(df_unique["embedding"].values)
+
+# 2) PCA auf 142 Komponenten (80 % Varianz)
+pca = PCA(n_components=236)
+X_pca = pca.fit_transform(X_embed)
+
+# 3) KMeans-Clustering im 142-dimensionalen Raum
+kmeans = KMeans(n_clusters=5, random_state=42)
+labels = kmeans.fit_predict(X_pca)
+
+# 4) 3D-Scatterplot der ersten drei PCs
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection="3d")
+ax.scatter(
+    X_pca[:, 0], X_pca[:, 1], X_pca[:, 2],
+    c=labels, s=10, alpha=0.6
+)
+ax.set_xlabel("PC1")
+ax.set_ylabel("PC2")
+ax.set_zlabel("PC3")
+ax.set_title("PCA (236D) – 3D Plot of PCs 1–3 with 5 clusters")
+plt.tight_layout()
+plt.show()
+
+# 5) Explained Variance Ratio für die ersten 10 PCs
+for i, ratio in enumerate(pca.explained_variance_ratio_[:10], start=1):
+    print(f"PC{i}: {ratio:.4f}")
+print(f"... (insgesamt {len(pca.explained_variance_ratio_)} PCs)")
+
+
+# In[47]:
+
+
+# Cluster direkt zu df_unique hinzufügen
+df_unique["cluster"] = labels
+
+# Für jeden Cluster die 10 häufigsten Wörter (hier in df_unique natürlich alle einmal)
+for i in range(5):
+    words_i = df_unique.loc[df_unique["cluster"] == i, "word_lower"]
+    print(f"Cluster {i}: ", words_i.value_counts().head(10).index.tolist())
+
+
+# In[48]:
+
+
+pca = PCA(n_components=236)
+X_pca = pca.fit_transform(X_embed)
+
+# 3) KMeans-Clustering im 142-dimensionalen Raum
+kmeans = KMeans(n_clusters=100, random_state=42)
+labels = kmeans.fit_predict(X_pca)
+
+df_unique["cluster"] = labels
+
+# Für jeden Cluster die 10 häufigsten Wörter (hier in df_unique natürlich alle einmal)
+for i in range(100):
+    words_i = df_unique.loc[df_unique["cluster"] == i, "word_lower"]
+    print(f"Cluster {i}: ", words_i.value_counts().head(10).index.tolist())
+
+
+# In[51]:
+
+
+word2cluster = dict(zip(df_unique["word_lower"], labels))
+
+df_clean["cluster"] = df_clean["word_lower"].map(word2cluster)
+
+
+# In[57]:
+
+
+# 1) Deine Cluster-Wörter vorbereiten, z.B. dict: {cluster_id: [w1, w2, ...], ...}
+df_clean_clusters = df_clean.copy()
+clusters = {}
+for cl in sorted(df_clean_clusters["cluster"].unique()):
+    words = df_clean_clusters.loc[df_clean_clusters.cluster==cl, "word_lower"].value_counts().head(10).index.tolist()
+    clusters[cl] = words
+
+# 2) Label-Generierung
+labels = {}
+for cl, words in clusters.items():
+    prompt = (
+        "Bitte gib mir **ein einziges englisches Wort**, das am besten diese Liste von Wörtern "
+        f"beschreibt: {', '.join(words)}."
+    )
+    resp = openai.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "Du bist ein hilfreicher Assistent, der Cluster-Kategorien prägnant in nur einem Wort auf englisch zusammenfasst."},
+            {"role": "user",   "content": prompt}
+        ],
+        temperature=0.0,
+        max_tokens=6,
+        n=1
+    )
+    label = resp.choices[0].message.content.strip().strip('"')
+    labels[cl] = label
+
+# 3) Labels ins DataFrame einfügen
+df_clean_clusters["cluster_label"] = df_clean_clusters["cluster"].map(labels)
+
+# 4) Kontrolle
+for cl, lab in labels.items():
+    top10 = clusters[cl]  # deine vorher ermittelten Top‐10-Wörter
+    print(f"Cluster {cl} ({lab}): {top10}")
+
+
+# In[ ]:
+
+
+df_cluster = df_clean_clusters.copy()
+n
+df_cluster.to_pickle("df_cluster.pkl")
+
+
+# ___
+# ### RUN FROM HERE
+
+# In[59]:
+
+
+df_cluster = pd.read_pickle("df_cluster.pkl")
+
+
+# In[75]:
+
+
+X_all       = np.vstack(df_cluster["embedding"].values)  # (472133, original_dim)
+X_pca_all   = pca.transform(X_all)                       # (472133, 236)
+
+df_cluster["embedding"] = list(X_pca_all)
+
+
+# In[84]:
+
+
+# 1) PCA-Embeddings direkt aus df_clean holen
+X_embed  = np.vstack(df_cluster["embedding"].values)      # (N, 236)
+
+# 2) Syntax-Features
+X_syntax = df_cluster[["word_length","word_pos_in_sentence","log_global_rel"]].values  # (N, 3)
+
+# 3) Kombinierte Eingabe
+X_comb   = np.hstack([X_embed, X_syntax])               # (N, 239)
+
+# 4) Zielwerte
+df_cluster["log_gaze"] = np.log1p(df_cluster["WORD_GAZE_DURATION"])
+y        = torch.from_numpy(df_cluster["log_gaze"].values).float().unsqueeze(1)
+
+
+X_tensor = torch.from_numpy(X_comb).float()
+ds        = TensorDataset(X_tensor, y)
+n         = len(ds)
+n_train   = int(0.8 * n)
+n_temp    = n - n_train
+n_val     = n_temp // 2
+n_test    = n_temp - n_val
+
+train_ds, val_ds, test_ds = random_split(
+    ds, [n_train, n_val, n_test],
+    generator=torch.Generator().manual_seed(42)
+)
+train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
+val_loader   = DataLoader(val_ds,   batch_size=64, shuffle=False)
+test_loader  = DataLoader(test_ds,  batch_size=64, shuffle=False)
+
+# 6) Modell initieren mit input_dim=239
+model_PCA = GazeNet(input_dim=X_comb.shape[1]).to(device)
+
+
+# Loss & Optimizer
+criterion = nn.MSELoss()
+optimizer = torch.optim.Adam(model_PCA.parameters(), lr=1e-3)
+
+# --- Training Loop mit Validation ---
+n_epochs = 50
+train_mses = []
+val_mses   = []
+
+for epoch in range(1, n_epochs+1):
+    # --- Training ---
+    model_PCA.train()
+    total_train = 0.0
+    for Xb, yb in train_loader:
+        Xb, yb = Xb.to(device), yb.to(device)
+        optimizer.zero_grad()
+        preds = model_PCA(Xb)
+        loss = criterion(preds, yb)
+        loss.backward()
+        optimizer.step()
+        total_train += loss.item() * Xb.size(0)
+    train_mse = total_train / len(train_loader.dataset)
+    train_mses.append(train_mse)
+
+    # --- Validation auf val_loader ---
+    model_PCA.eval()
+    total_val = 0.0
+    with torch.no_grad():
+        for Xb, yb in val_loader:
+            Xb, yb = Xb.to(device), yb.to(device)
+            preds = model_PCA(Xb)
+            total_val += criterion(preds, yb).item() * Xb.size(0)
+    val_mse = total_val / len(val_loader.dataset)
+    val_mses.append(val_mse)
+
+    print(f"Epoch {epoch:02d}/{n_epochs} — Train MSE: {train_mse:.4f}, Val MSE: {val_mse:.4f}")
+
+# --- Plot Training vs. Validation MSE ---
+import matplotlib.pyplot as plt
+
+epochs = list(range(1, n_epochs+1))
+plt.figure(figsize=(8,5))
+plt.plot(epochs, train_mses, label="Train MSE", marker='o')
+plt.plot(epochs, val_mses,   label="Val   MSE", marker='s')
+plt.xlabel("Epoch")
+plt.ylabel("MSE")
+plt.title("Combined Model on PCA-Reduced Data — Train vs. Val. MSE")
+plt.legend()
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+
+# In[85]:
+
+
+# Modell in Eval-Mode
+model_PCA.eval()
+preds_log, trues_log = [], []
+
+with torch.no_grad():
+    for Xb, yb in test_loader:
+        Xb, yb = Xb.to(device), yb.to(device)
+        out = model_PCA(Xb)
+        preds_log.append(out.cpu().numpy())
+        trues_log.append(yb.cpu().numpy())
+
+# Arrays zusammenführen
+preds_log = np.vstack(preds_log).ravel()
+trues_log = np.vstack(trues_log).ravel()
+
+# Log-MSE
+mse_log = np.mean((preds_log - trues_log)**2)
+
+# Rücktransform und Original-MSE/RMSE
+preds_ms = np.expm1(preds_log)
+trues_ms = np.expm1(trues_log)
+mse_ms  = np.mean((preds_ms - trues_ms)**2)
+rmse_ms = np.sqrt(mse_ms)
+
+print(f"Final Test MSE (log scale): {mse_log:.4f}")
+print(f"Final Test MSE (ms):        {mse_ms:.4f}")
+print(f"Final Test RMSE (ms):       {rmse_ms:.1f} ms")
+
+
+# In[81]:
+
+
+df_oh = pd.get_dummies(df_cluster["cluster"], prefix="cl")  
+#    ergibt (N,100) Matrix mit überall 0/1
+
+# 3.) Kombiniere Deine Features
+X_embed  = np.vstack(df_cluster["embedding"].values)      # (N,236)
+X_syntax = df_cluster[["word_length","word_pos_in_sentence","log_global_rel"]].values  # (N,3)
+X_extra  = df_oh.values                                     # (N,100)
+
+X_comb = np.hstack([X_embed, X_syntax, X_extra])           # (N,339)
+
+df_cluster["log_gaze"] = np.log1p(df_cluster["WORD_GAZE_DURATION"])
+y        = torch.from_numpy(df_cluster["log_gaze"].values).float().unsqueeze(1)
+
+
+X_tensor = torch.from_numpy(X_comb).float()
+ds        = TensorDataset(X_tensor, y)
+n         = len(ds)
+n_train   = int(0.8 * n)
+n_temp    = n - n_train
+n_val     = n_temp // 2
+n_test    = n_temp - n_val
+
+train_ds, val_ds, test_ds = random_split(
+    ds, [n_train, n_val, n_test],
+    generator=torch.Generator().manual_seed(42)
+)
+train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
+val_loader   = DataLoader(val_ds,   batch_size=64, shuffle=False)
+test_loader  = DataLoader(test_ds,  batch_size=64, shuffle=False)
+
+# 6) Modell initieren mit input_dim=239
+model_PCA_clusters = GazeNet(input_dim=X_comb.shape[1]).to(device)
+
+
+# Loss & Optimizer
+criterion = nn.MSELoss()
+optimizer = torch.optim.Adam(model_PCA_clusters.parameters(), lr=1e-3)
+
+# --- Training Loop mit Validation ---
+n_epochs = 50
+train_mses = []
+val_mses   = []
+
+for epoch in range(1, n_epochs+1):
+    # --- Training ---
+    model_PCA_clusters.train()
+    total_train = 0.0
+    for Xb, yb in train_loader:
+        Xb, yb = Xb.to(device), yb.to(device)
+        optimizer.zero_grad()
+        preds = model_PCA_clusters(Xb)
+        loss = criterion(preds, yb)
+        loss.backward()
+        optimizer.step()
+        total_train += loss.item() * Xb.size(0)
+    train_mse = total_train / len(train_loader.dataset)
+    train_mses.append(train_mse)
+
+    # --- Validation auf val_loader ---
+    model_PCA_clusters.eval()
+    total_val = 0.0
+    with torch.no_grad():
+        for Xb, yb in val_loader:
+            Xb, yb = Xb.to(device), yb.to(device)
+            preds = model_PCA_clusters(Xb)
+            total_val += criterion(preds, yb).item() * Xb.size(0)
+    val_mse = total_val / len(val_loader.dataset)
+    val_mses.append(val_mse)
+
+    print(f"Epoch {epoch:02d}/{n_epochs} — Train MSE: {train_mse:.4f}, Val MSE: {val_mse:.4f}")
+
+# --- Plot Training vs. Validation MSE ---
+import matplotlib.pyplot as plt
+
+epochs = list(range(1, n_epochs+1))
+plt.figure(figsize=(8,5))
+plt.plot(epochs, train_mses, label="Train MSE", marker='o')
+plt.plot(epochs, val_mses,   label="Val   MSE", marker='s')
+plt.xlabel("Epoch")
+plt.ylabel("MSE")
+plt.title("Combined Model on PCA-Reduced Data (w/ Cluster IDs) — Train vs. Validation MSE")
+plt.legend()
+plt.grid(alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+
+# In[82]:
+
+
+# Modell in Eval-Mode
+model_PCA_clusters.eval()
+preds_log, trues_log = [], []
+
+with torch.no_grad():
+    for Xb, yb in test_loader:
+        Xb, yb = Xb.to(device), yb.to(device)
+        out = model_PCA_clusters(Xb)
+        preds_log.append(out.cpu().numpy())
+        trues_log.append(yb.cpu().numpy())
+
+# Arrays zusammenführen
+preds_log = np.vstack(preds_log).ravel()
+trues_log = np.vstack(trues_log).ravel()
+
+# Log-MSE
+mse_log = np.mean((preds_log - trues_log)**2)
+
+# Rücktransform und Original-MSE/RMSE
+preds_ms = np.expm1(preds_log)
+trues_ms = np.expm1(trues_log)
+mse_ms  = np.mean((preds_ms - trues_ms)**2)
+rmse_ms = np.sqrt(mse_ms)
+
+print(f"Final Test MSE (log scale): {mse_log:.4f}")
+print(f"Final Test MSE (ms):        {mse_ms:.4f}")
+print(f"Final Test RMSE (ms):       {rmse_ms:.1f} ms")
 
